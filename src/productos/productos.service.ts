@@ -1,26 +1,126 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Producto } from './entities/producto.entity';
+import { Repository } from 'typeorm';
+import { Imgproducto } from 'src/imgproductos/entities/imgproducto.entity';
+import { Categoria } from 'src/categorias/entities/categoria.entity';
+import { AwsS3Service } from 'src/aws-s3/aws-s3.service';
 
 @Injectable()
 export class ProductosService {
-  create(createProductoDto: CreateProductoDto) {
-    return 'This action adds a new producto';
+  constructor(
+    @InjectRepository(Producto)
+    private readonly productoRepo : Repository<Producto>,
+    @InjectRepository(Imgproducto)
+    private readonly imgRepo: Repository<Imgproducto>,
+    @InjectRepository(Categoria)
+    private readonly categoriaRepo: Repository<Categoria>,
+
+    private readonly awsS3Service:AwsS3Service
+  ){
+
+  }
+  async create(createProductoDto: CreateProductoDto,imagenes?:Express.Multer.File[]) {
+    const categoria = await this.categoriaRepo.findOne({
+      where:{id:createProductoDto.categoriaId}
+    })
+    if(!categoria){
+      throw new BadRequestException('La categoria indicada no existe')
+    }
+    const producto = this.productoRepo.create({
+      nombre:createProductoDto.nombre.trim(),
+      sku:createProductoDto.sku,
+      cantidad:createProductoDto.cantidad??0,
+      precio:createProductoDto.precio,
+      categoriaId:createProductoDto.categoriaId
+    });
+    await this.productoRepo.save(producto)
+    if(imagenes && imagenes.length>0){
+      const urls = await Promise.all(
+        imagenes.map(file=>this.awsS3Service.uploadImage(file,'productos'))
+      )
+      const imgEntities = urls.map((url,index)=>
+        this.imgRepo.create({
+          url,
+          principal: index === 0,
+          order:index,
+          productoId:producto.id
+        })
+      )
+      await this.imgRepo.save(imgEntities)
+      producto.imagenes=imgEntities
+    }
+    return {msg: 'Producto creado correctamente'}
   }
 
   findAll() {
-    return `This action returns all productos`;
+    return this.productoRepo.find({
+      relations:['categoria','imagenes'],
+      order:{id:'ASC'}
+    });
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} producto`;
+  async findOne(id: number) {
+    const producto = await this.productoRepo.findOne({
+      where:{id},
+      relations:['categoria','imagenes']
+    })
+    if(!producto){
+      throw new NotFoundException('Producto no encontrado')
+    }
+    return producto;
   }
 
-  update(id: number, updateProductoDto: UpdateProductoDto) {
-    return `This action updates a #${id} producto`;
+  async update(id: number, updateProductoDto: UpdateProductoDto,imagenes?:Express.Multer.File[]) {
+    const producto = await this.findOne(id)
+    if(updateProductoDto.nombre){
+      producto.nombre = updateProductoDto.nombre.trim()
+    }
+    if(updateProductoDto.sku){
+      producto.sku = updateProductoDto.sku
+    }
+    if(updateProductoDto.cantidad !== undefined){
+      producto.cantidad = updateProductoDto.cantidad
+    }
+    if(updateProductoDto.precio !==undefined){
+      producto.precio = updateProductoDto.precio
+    }
+    if(updateProductoDto.categoriaId){
+      const categoria  = await this.categoriaRepo.findOne({
+        where:{id:updateProductoDto.categoriaId}
+      })
+      if(!categoria){
+        throw new BadRequestException('La nueva categoria no existe')
+      }
+      producto.categoriaId = updateProductoDto.categoriaId
+    }
+    await this.productoRepo.save(producto)
+
+    if(imagenes && imagenes.length>0){
+      await this.imgRepo.delete({productoId:producto.id})
+      const urls = await Promise.all(
+        imagenes.map(file=>this.awsS3Service.uploadImage(file,'productos'))
+      )
+      const imgEntities = urls.map((url,index)=>
+      this.imgRepo.create({
+        url,
+        principal:index===0,
+        order:index,
+        productoId:producto.id
+      })
+      )
+      await this.imgRepo.save(imgEntities)
+      producto.imagenes=imgEntities
+    }
+
+    return {msg:'Producto actualizado correctamente'};
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} producto`;
+  async remove(id: number) {
+    const producto = await this.findOne(id)
+    await this.productoRepo.remove(producto)
+    return {msg:'Producto eliminado correctamente'};
   }
 }
