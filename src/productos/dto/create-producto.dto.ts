@@ -7,7 +7,7 @@ export class CreateProductoDto {
 
     @IsString()
     @Length(6,6)
-    sku:string
+    sku?:string
 
     @IsInt()
     @Min(0)

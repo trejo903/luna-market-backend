@@ -22,37 +22,69 @@ export class ProductosService {
   ){
 
   }
-  async create(createProductoDto: CreateProductoDto,imagenes?:Express.Multer.File[]) {
-    const categoria = await this.categoriaRepo.findOne({
-      where:{id:createProductoDto.categoriaId}
-    })
-    if(!categoria){
-      throw new BadRequestException('La categoria indicada no existe')
+  /** Genera un SKU de 6 dígitos y se asegura de que no exista en la BD */
+  private async generateUniqueSku(): Promise<string> {
+    while (true) {
+      // número aleatorio entre 100000 y 999999
+      const sku = Math.floor(100000 + Math.random() * 900000).toString();
+
+      const exists = await this.productoRepo.findOne({ where: { sku } });
+      if (!exists) {
+        return sku;
+      }
+      // si existe, vuelve a intentar
     }
-    const producto = this.productoRepo.create({
-      nombre:createProductoDto.nombre.trim(),
-      sku:createProductoDto.sku,
-      cantidad:createProductoDto.cantidad??0,
-      precio:createProductoDto.precio,
-      categoriaId:createProductoDto.categoriaId
+  }
+
+  async create(
+    createProductoDto: CreateProductoDto,
+    imagenes?: Express.Multer.File[],
+  ) {
+    const categoria = await this.categoriaRepo.findOne({
+      where: { id: createProductoDto.categoriaId },
     });
-    await this.productoRepo.save(producto)
-    if(imagenes && imagenes.length>0){
+
+    if (!categoria) {
+      throw new BadRequestException('La categoria indicada no existe');
+    }
+
+    // si no viene sku en el dto, lo generamos
+    const sku = createProductoDto.sku ?? (await this.generateUniqueSku());
+
+    const producto = this.productoRepo.create({
+      nombre: createProductoDto.nombre.trim(),
+      sku,
+      cantidad: createProductoDto.cantidad ?? 0,
+      precio: createProductoDto.precio,
+      categoriaId: createProductoDto.categoriaId,
+    });
+
+    await this.productoRepo.save(producto);
+
+    if (imagenes && imagenes.length > 0) {
       const urls = await Promise.all(
-        imagenes.map(file=>this.awsS3Service.uploadImage(file,'productos'))
-      )
-      const imgEntities = urls.map((url,index)=>
+        imagenes.map((file) => this.awsS3Service.uploadImage(file, 'productos')),
+      );
+
+      const imgEntities = urls.map((url, index) =>
         this.imgRepo.create({
           url,
           principal: index === 0,
-          order:index,
-          productoId:producto.id
-        })
-      )
-      await this.imgRepo.save(imgEntities)
-      producto.imagenes=imgEntities
+          order: index,
+          productoId: producto.id,
+        }),
+      );
+
+      await this.imgRepo.save(imgEntities);
+      producto.imagenes = imgEntities;
     }
-    return {msg: 'Producto creado correctamente'}
+
+    return {
+  msg: 'Producto creado correctamente',
+  sku: producto.sku,
+  producto,
+};
+
   }
 
   findAll() {
