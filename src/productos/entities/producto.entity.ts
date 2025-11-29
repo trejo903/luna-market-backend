@@ -19,7 +19,7 @@ export class Producto {
 
     @ManyToOne(()=>Categoria,(categoria)=>categoria.productos,{
         nullable:false,
-        onDelete:'RESTRICT'
+        onDelete:'CASCADE'
     })
     @JoinColumn({name:'categoria_id'})
     categoria:Categoria
